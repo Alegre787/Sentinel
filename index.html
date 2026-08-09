@@ -732,7 +732,7 @@ table.ps-tbl td{padding:8px 8px;vertical-align:middle;font-size:13px;color:var(-
 <div class="header">
   <div class="logo">
     <div class="logo-mark">SENTINEL</div>
-    <div class="logo-sub">Institutional Screener v11</div>
+    <div class="logo-sub">Institutional Screener v13</div>
   </div>
   <nav class="nav">
     <button class="nav-btn active" onclick="showView('prescreen',this)">Pre-Screen</button>
@@ -945,10 +945,20 @@ table.ps-tbl td{padding:8px 8px;vertical-align:middle;font-size:13px;color:var(-
       <button class="btn btn-secondary" style="font-size:11px;padding:8px 12px" onclick="toggleKeyVisibility()">Show</button>
     </div>
     <div class="api-key-status" id="apiKeyStatus"><div class="key-dot"></div><span>No key set</span></div>
+    <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
+      <div style="font-family:var(--f-mono);font-size:10px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--t2);margin-bottom:8px">Server Sync (Optional)</div>
+      <div class="field" style="margin-bottom:8px"><label>Render Server URL</label>
+        <input type="text" id="serverUrlInput" placeholder="https://your-app.onrender.com" style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:5px;color:var(--t1);font-family:var(--f-mono);font-size:12px;padding:7px 10px;outline:none"/>
+      </div>
+      <div class="field" style="margin-bottom:6px"><label>Server Token</label>
+        <input type="password" id="serverTokenInput" placeholder="Your secret token" style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:5px;color:var(--t1);font-family:var(--f-mono);font-size:12px;padding:7px 10px;outline:none"/>
+      </div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:4px">Syncs Deep Analysis and Pre-Screener history across all devices.</div>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-danger" style="font-size:11px" onclick="clearApiKey()">Clear</button>
       <button class="btn btn-secondary" style="font-size:11px" onclick="closeApiModal()">Cancel</button>
-      <button class="btn btn-primary" style="font-size:11px" onclick="saveApiKey()">Save Key</button>
+      <button class="btn btn-primary" style="font-size:11px" onclick="saveApiKey()">Save</button>
     </div>
   </div>
 </div>
@@ -976,13 +986,45 @@ const DA_STORAGE = 'sentinel_analyses';
 const PS_STORAGE = 'sentinel_prescreen_history';
 const API_KEY_STORAGE = 'sentinel_api_key';
 
+// ── Server sync ──────────────────────────────────────────────────────────────
+const SENTINEL_SERVER=(localStorage.getItem('sentinel_server_url')||'').replace(/\/+$/,'');
+const SENTINEL_TOKEN=localStorage.getItem('sentinel_server_token')||'';
+const SERVER_ENABLED=!!(SENTINEL_SERVER&&SENTINEL_TOKEN);
+
+async function serverRequest(method,path,body){
+  if(!SERVER_ENABLED)return null;
+  try{
+    const opts={method,headers:{'Content-Type':'application/json','X-Sentinel-Token':SENTINEL_TOKEN}};
+    if(body)opts.body=JSON.stringify(body);
+    // 8-second timeout — prevents page hanging when Render is asleep
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),8000);
+    opts.signal=controller.signal;
+    const resp=await fetch(SENTINEL_SERVER+path,opts);
+    clearTimeout(timer);
+    if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error||resp.statusText);}
+    return await resp.json();
+  }catch(e){
+    if(e.name==='AbortError')console.warn('Server timeout — server may be waking up, will retry next action');
+    else console.warn('Server sync error:',e.message);
+    return null;
+  }
+}
+
 function getApiKey(){ return localStorage.getItem(API_KEY_STORAGE)||''; }
 function saveApiKey(){
   const v=document.getElementById('apiKeyInput').value.trim();
   if(!v){showToast('Enter a key first');return;}
   if(!v.startsWith('sk-ant-')){showToast('Key should start with sk-ant-');return;}
   localStorage.setItem(API_KEY_STORAGE,v);
-  updateApiIndicator();updateApiKeyStatus();closeApiModal();showToast('API key saved');
+  const urlEl=document.getElementById('serverUrlInput');
+  const tokEl=document.getElementById('serverTokenInput');
+  if(urlEl){const url=(urlEl.value||'').trim().replace(/\/+$/,'');url?localStorage.setItem('sentinel_server_url',url):localStorage.removeItem('sentinel_server_url');}
+  if(tokEl){const tok=(tokEl.value||'').trim();tok?localStorage.setItem('sentinel_server_token',tok):localStorage.removeItem('sentinel_server_token');}
+  updateApiIndicator();updateApiKeyStatus();closeApiModal();
+  showToast('Settings saved');
+  const hasServer=localStorage.getItem('sentinel_server_url')&&localStorage.getItem('sentinel_server_token');
+  if(hasServer)setTimeout(()=>location.reload(),600);
 }
 function clearApiKey(){
   if(!confirm('Remove stored API key?'))return;
@@ -995,6 +1037,10 @@ function openApiModal(){
   document.getElementById('apiKeyInput').type='password';
   document.getElementById('apiModal').querySelector('[onclick="toggleKeyVisibility()"]').textContent='Show';
   updateApiKeyStatus();
+  const urlEl=document.getElementById('serverUrlInput');
+  const tokEl=document.getElementById('serverTokenInput');
+  if(urlEl)urlEl.value=localStorage.getItem('sentinel_server_url')||'';
+  if(tokEl)tokEl.value=localStorage.getItem('sentinel_server_token')||'';
   document.getElementById('apiModal').classList.add('open');
 }
 function closeApiModal(){document.getElementById('apiModal').classList.remove('open');}
@@ -1026,12 +1072,28 @@ function showView(v,btn){
   if(v==='compare')renderCompare();
 }
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
-function daLoadAll(){try{const r=localStorage.getItem(DA_STORAGE);return r?JSON.parse(r):{};}catch{return {};}}
+function daLoadAll(){try{const r=localStorage.getItem(DA_STORAGE);return r?JSON.parse(r):{};}catch{return{};}}
 function daSaveAll(d){try{localStorage.setItem(DA_STORAGE,JSON.stringify(d));}catch(e){showToast('Storage error: '+e.message);}}
-function daSaveAnalysis(ticker,result){const a=daLoadAll();if(!a[ticker])a[ticker]=[];a[ticker].push(result);daSaveAll(a);}
+async function daSyncFromServer(){
+  if(!SERVER_ENABLED)return;
+  const remote=await serverRequest('GET','/api/da');
+  if(remote&&typeof remote==='object'){daSaveAll(remote);console.log('DA synced from server');}
+}
+async function psSyncFromServer(){
+  if(!SERVER_ENABLED)return;
+  const remote=await serverRequest('GET','/api/ps');
+  if(Array.isArray(remote)){try{localStorage.setItem(PS_STORAGE,JSON.stringify(remote));}catch(e){}console.log('PS synced from server');}
+}
+async function daSaveAnalysis(ticker,result){
+  const a=daLoadAll();if(!a[ticker])a[ticker]=[];a[ticker].push(result);daSaveAll(a);
+  if(SERVER_ENABLED)await serverRequest('POST','/api/da/'+ticker,{analysis:result});
+}
 function daGetHistory(ticker){return daLoadAll()[ticker]||[];}
 function psLoadHistory(){try{const r=localStorage.getItem(PS_STORAGE);return r?JSON.parse(r):[]}catch{return[];}}
-function psSaveHistory(arr){try{localStorage.setItem(PS_STORAGE,JSON.stringify(arr));}catch(e){showToast('Storage error: '+e.message);}}
+async function psSaveHistory(arr){
+  try{localStorage.setItem(PS_STORAGE,JSON.stringify(arr));}catch(e){showToast('Storage error: '+e.message);}
+  if(SERVER_ENABLED)await serverRequest('POST','/api/ps',{sessions:arr});
+}
 
 // ═══════════════════════════════════════════════════════
 // DEEP ANALYSIS — PARAMETERS (22, trimmed from 40)
@@ -2408,6 +2470,13 @@ function closeImportModal(){
 // INIT
 // ═══════════════════════════════════════════════════════
 document.getElementById('apiModal').addEventListener('click',function(e){if(e.target===this)closeApiModal();});
+// Startup sync — delayed 2s so page renders first, non-blocking
+setTimeout(async()=>{
+  try{
+    await Promise.all([daSyncFromServer(),psSyncFromServer()]);
+    if(SERVER_ENABLED){showToast('History synced ✓');daRenderHistory();psRenderHistory();}
+  }catch(e){console.warn('Startup sync failed:',e.message);}
+},2000);
 document.addEventListener('DOMContentLoaded',function(){
   const dz=document.getElementById('importDropZone');
   if(!dz)return;
