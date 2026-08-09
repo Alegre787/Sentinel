@@ -16,7 +16,7 @@ if (!TOKEN) {
 }
 
 // ── Database setup ───────────────────────────────────────────────────────────
-const DB_DIR  = process.env.DB_DIR || '/data';
+const DB_DIR  = process.env.DB_DIR || '/tmp';
 const DB_PATH = path.join(DB_DIR, 'sentinel.db');
 
 if (!fs.existsSync(DB_DIR)) {
