@@ -732,7 +732,7 @@ table.ps-tbl td{padding:8px 8px;vertical-align:middle;font-size:13px;color:var(-
 <div class="header">
   <div class="logo">
     <div class="logo-mark">SENTINEL</div>
-    <div class="logo-sub">Institutional Screener v14</div>
+    <div class="logo-sub">Institutional Screener v15</div>
   </div>
   <nav class="nav">
     <button class="nav-btn active" onclick="showView('prescreen',this)">Pre-Screen</button>
@@ -999,7 +999,7 @@ async function serverRequest(method,path,body){
     if(body)opts.body=JSON.stringify(body);
     // 8-second timeout — prevents page hanging when Render is asleep
     const controller=new AbortController();
-    const timer=setTimeout(()=>controller.abort(),8000);
+    const timer=setTimeout(()=>controller.abort(),5000);
     opts.signal=controller.signal;
     const resp=await fetch(SENTINEL_SERVER+path,opts);
     clearTimeout(timer);
@@ -2500,13 +2500,24 @@ function closeImportModal(){
 // INIT
 // ═══════════════════════════════════════════════════════
 document.getElementById('apiModal').addEventListener('click',function(e){if(e.target===this)closeApiModal();});
-// Startup sync — delayed 2s so page renders first, non-blocking
-setTimeout(async()=>{
-  try{
-    await Promise.all([daSyncFromServer(),psSyncFromServer()]);
-    if(SERVER_ENABLED){showToast('History synced ✓');daRenderHistory();psRenderHistory();}
-  }catch(e){console.warn('Startup sync failed:',e.message);}
-},2000);
+// Startup sync — fully deferred, never blocks page render or load
+// Uses setTimeout(0) to yield to browser paint first, then syncs silently
+window.addEventListener('load', function(){
+  setTimeout(async function(){
+    if(!SERVER_ENABLED) return;
+    try{
+      const results = await Promise.allSettled([daSyncFromServer(), psSyncFromServer()]);
+      const ok = results.every(r => r.status === 'fulfilled' && r.value !== null);
+      if(ok){
+        showToast('History synced ✓');
+        daRenderHistory();
+        psRenderHistory();
+      }
+    }catch(e){
+      console.warn('Startup sync failed silently:', e.message);
+    }
+  }, 100);
+});
 document.addEventListener('DOMContentLoaded',function(){
   const dz=document.getElementById('importDropZone');
   if(!dz)return;
