@@ -732,7 +732,7 @@ table.ps-tbl td{padding:8px 8px;vertical-align:middle;font-size:13px;color:var(-
 <div class="header">
   <div class="logo">
     <div class="logo-mark">SENTINEL</div>
-    <div class="logo-sub">Institutional Screener v13</div>
+    <div class="logo-sub">Institutional Screener v14</div>
   </div>
   <nav class="nav">
     <button class="nav-btn active" onclick="showView('prescreen',this)">Pre-Screen</button>
@@ -918,6 +918,7 @@ table.ps-tbl td{padding:8px 8px;vertical-align:middle;font-size:13px;color:var(-
       <div class="section-title" style="margin-bottom:0">Pre-Screen Session History</div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="psExportHistory()" style="font-size:11px;padding:7px 14px">↓ Export JSON</button>
+        <label class="btn btn-secondary" style="font-size:11px;padding:7px 14px;cursor:pointer">↑ Import JSON<input type="file" accept=".json" style="display:none" onchange="psImportHistory(event)"/></label>
         <button class="btn btn-danger" onclick="psClearHistory()" style="font-size:11px;padding:7px 14px">✕ Clear All</button>
       </div>
     </div>
@@ -1750,6 +1751,35 @@ function psExportHistory(){
 function psClearHistory(){
   if(!confirm('Delete all pre-screen history?'))return;
   psSaveHistory([]);psRenderHistory();showToast('Pre-screen history cleared');
+}
+
+function psImportHistory(event){
+  const file=event.target.files[0];
+  if(!file){return;}
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      const data=JSON.parse(e.target.result);
+      // Accept either {sessions:[...]} format or a bare array
+      const incoming=Array.isArray(data)?data:(data.sessions||[]);
+      if(!incoming.length){showToast('No sessions found in file');return;}
+      if(!confirm('Import '+incoming.length+' pre-screen session(s)? OK=Merge, Cancel=Replace all')){
+        // Replace
+        psSaveHistory(incoming);psRenderHistory();
+        showToast('Replaced with '+incoming.length+' imported session(s)');
+      } else {
+        // Merge — append sessions not already present (match by date+tickers)
+        const existing=psLoadHistory();
+        const existingKeys=new Set(existing.map(s=>s.date+'|'+(s.tickers||[]).join(',')));
+        const newSessions=incoming.filter(s=>!existingKeys.has(s.date+'|'+(s.tickers||[]).join(',')));
+        psSaveHistory([...existing,...newSessions]);
+        psRenderHistory();
+        showToast('Merged: '+newSessions.length+' new session(s) added');
+      }
+    }catch(err){showToast('Import failed: '+err.message);}
+    event.target.value='';
+  };
+  reader.readAsText(file);
 }
 
 // ═══════════════════════════════════════════════════════
