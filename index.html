@@ -1887,7 +1887,7 @@ function buildTechPrompt(ticker,company,exchange,riskSummary,allowedVerdicts,man
     +'\n\nVERDICT GATE (enforce strictly):'+'\n- Score ≥85 (Clean): invest, watch, or do_not_invest allowed'+'\n- Score 70-84 (Elevated): only watch or do_not_invest — INVEST blocked'+'\n- Score <70 (High Risk): only do_not_invest'+'\n- Any disqualifier: do_not_invest, conviction high'+'\nAllowed verdicts for this stock: '+allowedVerdicts+'\n\nANALYST MOMENTUM (search now): Find any analyst upgrades, new initiations, or price target raises in the last 30 days for '+ticker+'.'+'\n- Recent upgrade/initiation → supports higher conviction'+'\n- No recent activity → cap conviction at medium'+'\n- Recent downgrade → reduce conviction, prefer watch over invest'+'\n\nSTEP 2 — Return JSON only (no markdown):'
     +'\n{"tech_parameters":[{"id":"technical.X","status":"clear|flagged|insufficient","confidence":"high|medium|low","finding":"include actual numbers","source_url":null,"source_label":"source"}]'
     +',"technical_summary":{"current_price":51.75,"ma_50":53.20,"ma_200":49.80,"trend":"bullish|bearish|neutral","institutional_signals":"analyst targets and flow","key_support":48.50,"key_resistance":57.00,"price_vs_target":"vs analyst target"}'
-    +'"conclusion":{"verdict":"'+allowedVerdicts+'","conviction":"high|medium|low","horizon":"1-2 months","target_yield":"3-4%"'+'  ,"rationale":"3 sentences: (1) what the weighted risk score means and key flags, (2) technical picture with specific price levels, (3) analyst momentum and how it affects conviction"'+'  ,"entry_zone":"specific price range or wait instruction","price_assessment":"fairly_valued|extended|attractive"'+'  ,"key_risks":["risk 1","risk 2"],"key_catalysts":["catalyst 1","catalyst 2"]}}'
+    +',"conclusion":{"verdict":"'+allowedVerdicts+'","conviction":"high|medium|low","horizon":"1-2 months","target_yield":"3-4%"'+',"rationale":"3 sentences: (1) what the weighted risk score means and key flags, (2) technical picture with specific price levels, (3) analyst momentum and how it affects conviction"'+',"entry_zone":"specific price range or wait instruction","price_assessment":"fairly_valued|extended|attractive"'+',"key_risks":["risk 1","risk 2"],"key_catalysts":["catalyst 1","catalyst 2"]}}'
 }
 
 function extractJSON(raw,label){
@@ -1902,14 +1902,44 @@ function extractJSON(raw,label){
       if(lastClose===-1)throw new Error((label||'JSON')+' truncated');
       jsonStr=partial.substring(0,lastClose+1)+']';
     }else jsonStr=clean.substring(arrStart,arrEnd+1);
-  }else if(objStart!==-1)jsonStr=clean.substring(objStart,objEnd+1);
-  else throw new Error((label||'Response')+': no JSON found');
-  try{return JSON.parse(jsonStr);}
-  catch(e){
-    if(jsonStr.startsWith('[')){const lc=jsonStr.lastIndexOf(','),lclose=jsonStr.lastIndexOf('}');
-      if(lc!==-1&&lclose!==-1&&lc>lclose){try{return JSON.parse(jsonStr.substring(0,lc)+']');}catch{}}}
-    throw new Error((label||'JSON')+' parse error: '+e.message);
+  }else if(objStart!==-1){
+    if(objEnd===-1||objEnd<objStart){
+      // Truncated object — no closing brace; we'll try to repair in later passes
+      jsonStr=clean.substring(objStart);
+    }else jsonStr=clean.substring(objStart,objEnd+1);
+  }else throw new Error((label||'Response')+': no JSON found');
+  // Pass 1: parse as-is
+  try{return JSON.parse(jsonStr);}catch(e){/* fall through to repair */}
+  // Pass 2: strip literal control characters and lone surrogates
+  let repaired=jsonStr
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'')
+    .replace(/[\uD800-\uDFFF]/g,'');
+  try{return JSON.parse(repaired);}catch(e){/* fall through */}
+  // Pass 3: arrays — trim after last complete object
+  if(repaired.startsWith('[')){
+    const lc=repaired.lastIndexOf(','),lclose=repaired.lastIndexOf('}');
+    if(lc!==-1&&lclose!==-1&&lc>lclose){try{return JSON.parse(repaired.substring(0,lc)+']');}catch{}}
+    if(lclose!==-1){try{return JSON.parse(repaired.substring(0,lclose+1)+']');}catch{}}
   }
+  // Pass 4: objects — remove last incomplete key:value pair
+  // Use the full clean string (may extend beyond repaired's truncated jsonStr end)
+  const objSrc=clean.substring(clean.indexOf('{'))
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'')
+    .replace(/[\uD800-\uDFFF]/g,'');
+  if(objSrc.startsWith('{')){
+    // Find last }, or ], — marks end of a complete nested object/array value
+    const lastObjComma=objSrc.lastIndexOf('},');
+    const lastArrComma=objSrc.lastIndexOf('],');
+    const lastValEnd=Math.max(lastObjComma,lastArrComma);
+    if(lastValEnd>0){try{return JSON.parse(objSrc.substring(0,lastValEnd+1)+'}');}catch{}}
+    // Find last complete string property boundary
+    const lastStrComma=objSrc.lastIndexOf('","');
+    if(lastStrComma>0){try{return JSON.parse(objSrc.substring(0,lastStrComma+1)+'}');}catch{}}
+    // Find last } in source
+    const lastClose=objSrc.lastIndexOf('}');
+    if(lastClose>0){try{return JSON.parse(objSrc.substring(0,lastClose+1));}catch{}}
+  }
+  throw new Error((label||'JSON')+' parse error — response truncated or malformed');
 }
 
 // Risk batch: no web search — uses Haiku (training knowledge, cheap & fast)
