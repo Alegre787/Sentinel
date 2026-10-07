@@ -1887,7 +1887,7 @@ function buildTechPrompt(ticker,company,exchange,riskSummary,allowedVerdicts,man
     +'\n\nVERDICT GATE (enforce strictly):'+'\n- Score ≥85 (Clean): invest, watch, or do_not_invest allowed'+'\n- Score 70-84 (Elevated): only watch or do_not_invest — INVEST blocked'+'\n- Score <70 (High Risk): only do_not_invest'+'\n- Any disqualifier: do_not_invest, conviction high'+'\nAllowed verdicts for this stock: '+allowedVerdicts+'\n\nANALYST MOMENTUM (search now): Find any analyst upgrades, new initiations, or price target raises in the last 30 days for '+ticker+'.'+'\n- Recent upgrade/initiation → supports higher conviction'+'\n- No recent activity → cap conviction at medium'+'\n- Recent downgrade → reduce conviction, prefer watch over invest'+'\n\nSTEP 2 — Return JSON only (no markdown):'
     +'\n{"tech_parameters":[{"id":"technical.X","status":"clear|flagged|insufficient","confidence":"high|medium|low","finding":"include actual numbers","source_url":null,"source_label":"source"}]'
     +',"technical_summary":{"current_price":51.75,"ma_50":53.20,"ma_200":49.80,"trend":"bullish|bearish|neutral","institutional_signals":"analyst targets and flow","key_support":48.50,"key_resistance":57.00,"price_vs_target":"vs analyst target"}'
-    +',"conclusion":{"verdict":"'+allowedVerdicts+'","conviction":"high|medium|low","horizon":"1-2 months","target_yield":"3-4%"'+',"rationale":"3 sentences: (1) what the weighted risk score means and key flags, (2) technical picture with specific price levels, (3) analyst momentum and how it affects conviction"'+',"entry_zone":"specific price range or wait instruction","price_assessment":"fairly_valued|extended|attractive"'+',"key_risks":["risk 1","risk 2"],"key_catalysts":["catalyst 1","catalyst 2"]}}'
+    +',"conclusion":{"verdict":"'+allowedVerdicts+'","conviction":"high|medium|low","horizon":"1-2 months","target_yield":"3-4%"'+',"rationale":"2 sentences: (1) weighted risk score and key flags with technical price levels, (2) analyst momentum and conviction"'+',"entry_zone":"specific price range or wait instruction","price_assessment":"fairly_valued|extended|attractive"'+',"key_risks":["risk 1","risk 2"],"key_catalysts":["catalyst 1","catalyst 2"]}}'
 }
 
 function extractJSON(raw,label){
@@ -2141,7 +2141,7 @@ async function daRunAnalysis(){
     showToast('Technical + conclusion...');
     const manualPriceData=psManualData[ticker]||{};
     const tp=buildTechPrompt(ticker,company,exchange,riskSummary,allowedVerdicts,manualPriceData.price,manualPriceData.ma50,manualPriceData.ma200);
-    const tr=await daCallAPI(tp,3000);
+    const tr=await daCallAPI(tp,4000);
     const techResult=extractJSON(tr,'Technical+conclusion');
 
     clearInterval(interval);daUpdateProgress(DA_STEPS.length);
