@@ -2546,6 +2546,20 @@ window.addEventListener('load', function(){
       console.warn('Startup sync failed silently:', e.message);
     }
   }, 100);
+
+  // Keep-alive ping — prevents Render free tier from sleeping while the page is open
+  // Pings /health every 30 seconds silently; stops if the tab is hidden for >5 minutes
+  if(SERVER_ENABLED){
+    let hiddenSince=null;
+    document.addEventListener('visibilitychange',()=>{
+      if(document.hidden) hiddenSince=Date.now();
+      else hiddenSince=null;
+    });
+    setInterval(()=>{
+      if(document.hidden&&hiddenSince&&(Date.now()-hiddenSince)>5*60*1000) return;
+      fetch(SENTINEL_SERVER+'/health',{method:'GET'}).catch(()=>{});
+    }, 30000);
+  }
 });
 document.addEventListener('DOMContentLoaded',function(){
   const dz=document.getElementById('importDropZone');
