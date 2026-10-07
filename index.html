@@ -987,60 +987,28 @@ const DA_STORAGE = 'sentinel_analyses';
 const PS_STORAGE = 'sentinel_prescreen_history';
 const API_KEY_STORAGE = 'sentinel_api_key';
 
-// ── Turso sync (direct cloud SQLite, no intermediate server needed) ──────────
-const TURSO_URL=(localStorage.getItem('sentinel_server_url')||'').replace(/\/+$/,'');
-const TURSO_TOKEN=localStorage.getItem('sentinel_server_token')||'';
-const TURSO_ENABLED=!!(TURSO_URL&&TURSO_TOKEN);
+// ── Server sync ──────────────────────────────────────────────────────────────
+const SENTINEL_SERVER=(localStorage.getItem('sentinel_server_url')||'').replace(/\/+$/,'');
+const SENTINEL_TOKEN=localStorage.getItem('sentinel_server_token')||'';
+const SERVER_ENABLED=!!(SENTINEL_SERVER&&SENTINEL_TOKEN);
 
-// Execute one or more SQL statements against Turso via the HTTP pipeline API
-async function tursoRequest(requests){
-  if(!TURSO_ENABLED)return null;
+async function serverRequest(method,path,body){
+  if(!SERVER_ENABLED)return null;
   try{
+    const opts={method,headers:{'Content-Type':'application/json','X-Sentinel-Token':SENTINEL_TOKEN}};
+    if(body)opts.body=JSON.stringify(body);
     const controller=new AbortController();
     const timer=setTimeout(()=>controller.abort(),8000);
-    const resp=await fetch(TURSO_URL+'/v2/pipeline',{
-      method:'POST',
-      signal:controller.signal,
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+TURSO_TOKEN},
-      body:JSON.stringify({requests})
-    });
+    opts.signal=controller.signal;
+    const resp=await fetch(SENTINEL_SERVER+path,opts);
     clearTimeout(timer);
-    if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.message||resp.statusText);}
-    const data=await resp.json();
-    // Check for per-request errors
-    for(const r of(data.results||[])){if(r.type==='error')throw new Error(r.error?.message||'Turso error');}
-    return data;
+    if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error||resp.statusText);}
+    return await resp.json();
   }catch(e){
-    if(e.name==='AbortError')console.warn('Turso timeout');
-    else console.warn('Turso sync error:',e.message);
+    if(e.name==='AbortError')console.warn('Server timeout — server may be waking up');
+    else console.warn('Server sync error:',e.message);
     return null;
   }
-}
-
-// Helper — map Turso row columns+values into a plain object
-function tursoRows(result){
-  const cols=(result?.results?.[0]?.response?.result?.cols||[]).map(c=>c.name);
-  const rows=result?.results?.[0]?.response?.result?.rows||[];
-  return rows.map(r=>Object.fromEntries(cols.map((c,i)=>[c,r[i]?.value??null])));
-}
-
-async function tursoInit(){
-  if(!TURSO_ENABLED)return;
-  await tursoRequest([
-    {type:'execute',stmt:{sql:`CREATE TABLE IF NOT EXISTS da_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ticker TEXT NOT NULL,
-      analysis TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )`}},
-    {type:'execute',stmt:{sql:`CREATE INDEX IF NOT EXISTS idx_da_ticker ON da_history(ticker)`}},
-    {type:'execute',stmt:{sql:`CREATE TABLE IF NOT EXISTS ps_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )`}},
-    {type:'close'}
-  ]);
 }
 
 function getApiKey(){ return localStorage.getItem(API_KEY_STORAGE)||''; }
@@ -1107,54 +1075,24 @@ function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function daLoadAll(){try{const r=localStorage.getItem(DA_STORAGE);return r?JSON.parse(r):{};}catch{return{};}}
 function daSaveAll(d){try{localStorage.setItem(DA_STORAGE,JSON.stringify(d));}catch(e){showToast('Storage error: '+e.message);}}
 async function daSyncFromServer(){
-  if(!TURSO_ENABLED)return;
-  const res=await tursoRequest([
-    {type:'execute',stmt:{sql:'SELECT ticker, analysis FROM da_history ORDER BY id ASC'}},
-    {type:'close'}
-  ]);
-  if(!res)return;
-  const rows=tursoRows(res);
-  const remote={};
-  rows.forEach(row=>{
-    try{
-      const parsed=JSON.parse(row.analysis);
-      if(!remote[row.ticker])remote[row.ticker]=[];
-      remote[row.ticker].push(parsed);
-    }catch{}
-  });
-  daSaveAll(remote);
-  console.log('DA synced from Turso');
+  if(!SERVER_ENABLED)return;
+  const remote=await serverRequest('GET','/api/da');
+  if(remote&&typeof remote==='object'){daSaveAll(remote);console.log('DA synced from server');}
 }
 async function psSyncFromServer(){
-  if(!TURSO_ENABLED)return;
-  const res=await tursoRequest([
-    {type:'execute',stmt:{sql:'SELECT session FROM ps_history ORDER BY id ASC'}},
-    {type:'close'}
-  ]);
-  if(!res)return;
-  const rows=tursoRows(res);
-  const sessions=[];
-  rows.forEach(row=>{try{sessions.push(JSON.parse(row.session));}catch{}});
-  try{localStorage.setItem(PS_STORAGE,JSON.stringify(sessions));}catch(e){}
-  console.log('PS synced from Turso');
+  if(!SERVER_ENABLED)return;
+  const remote=await serverRequest('GET','/api/ps');
+  if(Array.isArray(remote)){try{localStorage.setItem(PS_STORAGE,JSON.stringify(remote));}catch(e){}console.log('PS synced from server');}
 }
 async function daSaveAnalysis(ticker,result){
   const a=daLoadAll();if(!a[ticker])a[ticker]=[];a[ticker].push(result);daSaveAll(a);
-  if(TURSO_ENABLED)await tursoRequest([
-    {type:'execute',stmt:{sql:'INSERT INTO da_history (ticker, analysis) VALUES (?, ?)',args:[{type:'text',value:ticker},{type:'text',value:JSON.stringify(result)}]}},
-    {type:'close'}
-  ]);
+  if(SERVER_ENABLED)await serverRequest('POST','/api/da/'+ticker,{analysis:result});
 }
 function daGetHistory(ticker){return daLoadAll()[ticker]||[];}
 function psLoadHistory(){try{const r=localStorage.getItem(PS_STORAGE);return r?JSON.parse(r):[]}catch{return[];}}
 async function psSaveHistory(arr){
   try{localStorage.setItem(PS_STORAGE,JSON.stringify(arr));}catch(e){showToast('Storage error: '+e.message);}
-  if(!TURSO_ENABLED)return;
-  // Replace all PS history: delete then re-insert
-  const requests=[{type:'execute',stmt:{sql:'DELETE FROM ps_history'}}];
-  arr.forEach(s=>requests.push({type:'execute',stmt:{sql:'INSERT INTO ps_history (session) VALUES (?)',args:[{type:'text',value:JSON.stringify(s)}]}}));
-  requests.push({type:'close'});
-  await tursoRequest(requests);
+  if(SERVER_ENABLED)await serverRequest('POST','/api/ps',{sessions:arr});
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2595,11 +2533,10 @@ document.getElementById('apiModal').addEventListener('click',function(e){if(e.ta
 // Uses setTimeout(0) to yield to browser paint first, then syncs silently
 window.addEventListener('load', function(){
   setTimeout(async function(){
-    if(!TURSO_ENABLED) return;
+    if(!SERVER_ENABLED) return;
     try{
-      await tursoInit();
       const results = await Promise.allSettled([daSyncFromServer(), psSyncFromServer()]);
-      const ok = results.every(r => r.status === 'fulfilled');
+      const ok = results.every(r => r.status === 'fulfilled' && r.value !== null);
       if(ok){
         showToast('History synced ✓');
         daRenderHistory();
